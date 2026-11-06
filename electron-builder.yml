@@ -1,0 +1,24 @@
+appId: com.tuffytp.app
+productName: TuffYTP
+directories:
+  output: dist
+files:
+  - out/**
+  - package.json
+  - '!node_modules/ffprobe-static/bin/**'
+  - node_modules/ffprobe-static/bin/${platform}/${arch}/**
+asarUnpack:
+  - node_modules/ffmpeg-static/**
+  - node_modules/ffprobe-static/**
+win:
+  target: nsis
+  icon: build/icon.ico
+nsis:
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+mac:
+  target: dmg
+  icon: build/icon.png
+linux:
+  target: AppImage
+  icon: build/icon.png
