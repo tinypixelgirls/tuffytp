@@ -1,8 +1,10 @@
 import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ExportRequest, ExportSegment, ProjectSettings } from '../shared/types';
+import { batchOverlays, findFonts, hasOverlays, planComposite } from './composite';
 import { runFfmpeg, type JobContext } from './ffmpeg';
 import { houseEncodeArgs } from './normalize';
+import { probe } from './probe';
 
 const HEIGHTS = { '720p': 720, '1080p': 1080 };
 const QUALITY = {
@@ -14,6 +16,10 @@ const WHOLE_FILE_TOLERANCE = 0.001;
 // Share of the progress bar for cutting clips when a final encode follows.
 const CUT_SHARE = 0.5;
 const AAC_ENCODER_DELAY = 1024;
+// Share of the progress bar for building the main track when layers go on top of it.
+const BASE_SHARE = 0.4;
+// Layer clips per ffmpeg pass. Each one is an open input with its own decoder.
+const LAYER_BATCH = 24;
 
 /** The size the export comes out at, kept to the project's shape and to even numbers. */
 export function outputSize({ settings, resolution }: Pick<ExportRequest, 'settings' | 'resolution'>) {
@@ -78,17 +84,94 @@ function buildFinalArgs(request: ExportRequest, listPath: string, outPath: strin
   ];
   if (!needsFinalEncode(request)) return [...concat, '-c:v', 'copy', ...audio, outPath];
 
+  return [...concat, '-vf', finishFilter(request), ...videoEncodeArgs(request), ...audio, outPath];
+}
+
+/** Scaling, frame rate and pixel format for the finished video. */
+function finishFilter(request: ExportRequest): string {
   const { width, height } = outputSize(request);
+  return `scale=${width}:${height}:flags=lanczos,setsar=1,fps=${request.fps},format=yuv420p`;
+}
+
+function videoEncodeArgs(request: ExportRequest): string[] {
   const { preset, crf } = request.quality === 'house' ? { preset: 'veryfast', crf: '18' } : QUALITY[request.quality];
-  return [
-    ...concat,
-    '-vf', `scale=${width}:${height}:flags=lanczos,setsar=1,fps=${request.fps},format=yuv420p`,
-    '-c:v', 'libx264',
-    '-preset', preset,
-    '-crf', crf,
-    ...audio,
-    outPath,
-  ];
+  return ['-c:v', 'libx264', '-preset', preset, '-crf', crf];
+}
+
+/**
+ * Joins the main track at the house settings, then stacks the layers over it. The last pass
+ * also does the export's scaling and quality; any before it keep near-lossless video and
+ * uncompressed sound, so nothing degrades from pass to pass.
+ */
+async function runCompositeExport(dir: string, request: ExportRequest, ctx: JobContext): Promise<string> {
+  const { settings, outputPath } = request;
+  await mkdir(dir, { recursive: true });
+
+  const basePath = join(dir, 'base.mp4');
+  await runExport(
+    join(dir, 'base-work'),
+    { ...request, composite: undefined, resolution: 'keep', fps: settings.fps, quality: 'house', outputPath: basePath },
+    { signal: ctx.signal, report: (progress, stage) => ctx.report(progress === null ? null : progress * BASE_SHARE, stage) },
+  );
+
+  const finished = join(dir, 'export.mp4');
+  await stackLayers(dir, basePath, request, finished, {
+    signal: ctx.signal,
+    report: (progress, stage) => ctx.report(progress === null ? null : BASE_SHARE + progress * (1 - BASE_SHARE), stage),
+  });
+
+  await copyFile(finished, outputPath);
+  await rm(dir, { recursive: true, force: true });
+  return outputPath;
+}
+
+/** Puts the request's layers over `basePath`, writing the finished video to `outPath`. */
+export async function stackLayers(
+  dir: string,
+  basePath: string,
+  request: ExportRequest,
+  outPath: string,
+  ctx: JobContext,
+  batchSize = LAYER_BATCH,
+): Promise<void> {
+  const { settings } = request;
+  const { duration } = await probe(basePath);
+  const batches = batchOverlays(request.composite!, batchSize);
+  const fonts = await findFonts();
+  let input = basePath;
+
+  for (const [index, batch] of batches.entries()) {
+    const last = index === batches.length - 1;
+    const workDir = join(dir, `pass-${index}`);
+    await mkdir(workDir, { recursive: true });
+    const output = last ? outPath : join(dir, `pass-${index}.mkv`);
+    const finish = last ? finishFilter(request) : 'format=yuv420p';
+    const plan = planComposite(batch, duration, settings, fonts, workDir, finish);
+    await Promise.all(plan.files.map(({ path, contents }) => writeFile(path, contents)));
+
+    const encode = last
+      ? [...videoEncodeArgs(request), '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart']
+      : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '10', '-c:a', 'pcm_s16le'];
+    ctx.report(index / batches.length, batches.length > 1 ? `Stacking layers (${index + 1}/${batches.length})` : 'Stacking layers');
+    await runFfmpeg({
+      args: [
+        '-i', input,
+        ...plan.inputs,
+        '-filter_complex', plan.filter,
+        '-map', '[vout]',
+        '-map', '[aout]',
+        '-t', String(duration),
+        ...encode,
+        '-ar', String(settings.sampleRate),
+        output,
+      ],
+      duration,
+      onProgress: (fraction) => ctx.report((index + fraction) / batches.length),
+      signal: ctx.signal,
+    });
+    if (input !== basePath) await rm(input, { force: true });
+    input = output;
+  }
 }
 
 /**
@@ -96,6 +179,7 @@ function buildFinalArgs(request: ExportRequest, listPath: string, outPath: strin
  * result to the chosen path, so a failed export can't damage a file that was already there.
  */
 export async function runExport(dir: string, request: ExportRequest, ctx: JobContext): Promise<string> {
+  if (hasOverlays(request.composite)) return runCompositeExport(dir, request, ctx);
   const { segments, settings, outputPath } = request;
   const encoding = needsFinalEncode(request);
   const totalSeconds = segments.reduce((total, { in: start, out }) => total + out - start, 0);

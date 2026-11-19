@@ -43,7 +43,7 @@ button {
   height: 100%;
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr) 340px;
-  grid-template-rows: minmax(0, 1fr) 270px auto;
+  grid-template-rows: minmax(0, 1fr) auto auto;
   grid-template-areas:
     'bin preview palette'
     'timeline timeline timeline'
@@ -830,8 +830,8 @@ button {
 
 .timeline-canvas {
   position: relative;
-  flex: 1;
-  min-height: 0;
+  flex: none;
+  height: 206px;
   overflow: hidden;
   border-radius: 3px;
 }
@@ -1013,4 +1013,340 @@ button {
   border: 2px solid var(--yellow);
   border-radius: var(--radius);
   box-shadow: 5px 5px 0 var(--black);
+}
+
+/* Layers */
+
+.stage canvas.compositor {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  touch-action: none;
+}
+
+.stage canvas.compositor[hidden] {
+  display: none;
+}
+
+.stage canvas.compositor.picking {
+  cursor: crosshair;
+}
+
+.stage-banner {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 10px;
+  background: var(--yellow);
+  color: var(--black);
+  font-weight: 800;
+  border-radius: var(--radius);
+  pointer-events: none;
+}
+
+.layer-lanes {
+  position: relative;
+  flex: none;
+  max-height: 124px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-radius: 3px;
+  background: #120e1e;
+}
+
+.layer-lanes.empty {
+  padding: 6px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  border: 1px dashed var(--line);
+}
+
+.lane {
+  position: relative;
+  height: 30px;
+  border-bottom: 1px solid #241c3a;
+  overflow: hidden;
+}
+
+.lane.hidden .lane-clip {
+  opacity: 0.35;
+}
+
+.lane-head {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 4px;
+  background: rgba(20, 16, 31, 0.86);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.lane-name {
+  max-width: 90px;
+  margin-right: 4px;
+  overflow: hidden;
+  color: var(--cyan);
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: text;
+}
+
+.lane-name-input {
+  width: 90px;
+  background: var(--bg);
+  border: 1px solid var(--yellow);
+  color: var(--ink);
+  font: inherit;
+  user-select: text;
+}
+
+.lane:not(:hover) .lane-button:not(.off) {
+  display: none;
+}
+
+.lane:not(:hover) .lane-head {
+  opacity: 0.75;
+}
+
+.lane-button {
+  min-width: 18px;
+  padding: 0 3px;
+  background: none;
+  border: none;
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.lane-button:hover:enabled {
+  color: var(--yellow);
+}
+
+.lane-button.off {
+  color: var(--line);
+  text-decoration: line-through;
+}
+
+.lane-button:disabled {
+  color: #3a3058;
+  cursor: default;
+}
+
+.lane-clip {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  overflow: hidden;
+  background: #6b2a8f;
+  border: 1px solid #000;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: grab;
+  touch-action: none;
+}
+
+.lane-clip.text {
+  background: #8f6b12;
+}
+
+.lane-clip.selected {
+  outline: 2px solid var(--yellow);
+  outline-offset: -1px;
+  z-index: 1;
+}
+
+.lane-clip.ghost {
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+.lane-clip.dragging {
+  opacity: 0.3;
+  outline: none;
+}
+
+.lane-clip.past-end {
+  background-image: repeating-linear-gradient(135deg, transparent 0 6px, rgba(0, 0, 0, 0.35) 6px 12px);
+}
+
+.lane-clip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.lane-badge {
+  margin-right: 4px;
+  padding: 0 3px;
+  background: #00ff66;
+  color: var(--black);
+  border-radius: 2px;
+  font-size: 9px;
+}
+
+.lane-key {
+  position: absolute;
+  bottom: 1px;
+  width: 7px;
+  height: 7px;
+  margin-left: -4px;
+  background: var(--yellow);
+  border: 1px solid #000;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.lanes-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 3;
+  width: 1px;
+  background: var(--magenta);
+  pointer-events: none;
+}
+
+.lanes-end {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  width: 2px;
+  background: rgba(255, 77, 61, 0.6);
+  pointer-events: none;
+}
+
+.inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--panel-raised);
+  border: 2px solid var(--yellow);
+  border-radius: var(--radius);
+}
+
+.inspector-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inspector-head h3 {
+  margin: 0;
+  color: var(--yellow);
+}
+
+.inspector-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.inspector-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.inspector-section h3 {
+  margin: 0;
+}
+
+.inspector-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.inspector-row select,
+.inspector .param select {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.inspector input[type='color'] {
+  width: 30px;
+  height: 22px;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.inspector-slider span {
+  display: flex;
+  justify-content: space-between;
+}
+
+.inspector-slider output {
+  color: var(--muted);
+  font-family: Consolas, monospace;
+}
+
+.inspector-slider input {
+  width: 100%;
+  accent-color: var(--yellow);
+}
+
+.inspector-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.inspector-text {
+  width: 100%;
+  padding: 4px 6px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+  user-select: text;
+}
+
+.inspector-note,
+.inspector-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.add-button.layer-add {
+  color: var(--cyan);
+  font-size: 16px;
+}
+
+.add-button:disabled {
+  color: var(--line);
+  background: none;
+  cursor: default;
 }

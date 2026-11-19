@@ -1,11 +1,12 @@
 import { useMemo, useState, type MouseEvent } from 'react';
 import { defaultParams, type EffectCategory, type EffectInfo } from '../../shared/effects';
 import { applyEffect, effectHistory, fullPoop, togglePin } from '../effects/apply';
-import { useStudio } from '../store/project';
+import { hasEffectTarget, useStudio } from '../store/project';
 import { selectClip } from '../timeline/commands';
 import { clipStarts } from '../timeline/model';
 import { seekTimeline } from '../timeline/transport';
 import { EffectParamsPopover } from './EffectParamsPopover';
+import { Inspector } from './Inspector';
 
 const CATEGORIES: { id: EffectCategory; title: string; tab: string }[] = [
   { id: 'audio+video', title: 'Audio + video', tab: 'A+V' },
@@ -20,7 +21,7 @@ const WIDE_EFFECTS = new Set(['chaos', 'ultrachaos']);
 
 export function EffectPalette() {
   const effects = useStudio((state) => state.effects);
-  const hasSelection = useStudio((state) => state.selection !== null);
+  const hasSelection = useStudio(hasEffectTarget);
   const [editing, setEditing] = useState<EffectInfo | null>(null);
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState<EffectCategory | 'all'>('all');
@@ -64,6 +65,7 @@ export function EffectPalette() {
         ))}
       </div>
       <div className="palette-scroll">
+        <Inspector />
         {CATEGORIES.map(({ id, title }) => {
           const group = visible.filter((effect) => effect.category === id);
           if (group.length === 0 && (query || id !== 'combo' || (tab !== 'all' && tab !== 'combo'))) return null;

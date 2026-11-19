@@ -1,9 +1,12 @@
+import { withLayers, type Layer } from '../shared/layers';
 import type { LoadedProject, ProjectFile } from '../shared/types';
 import { forgetRenders } from './effects/apply';
 import { blankProject, useStudio } from './store/project';
 import { player } from './timeline/transport';
 
 const AUTOSAVE_DELAY_MS = 300;
+
+const overlayCount = (layers: Layer[]) => layers.reduce((total, layer) => total + layer.clips.length, 0);
 
 function currentFile(): ProjectFile {
   const { project, sfxMedia } = useStudio.getState();
@@ -16,23 +19,35 @@ function currentFile(): ProjectFile {
  * purpose, and their records stay because the effect history reads its labels from them.
  */
 function show(loaded: LoadedProject): void {
-  const { file, name, missing } = loaded;
+  const { name, missing } = loaded;
+  const file = { ...loaded.file, project: withLayers(loaded.file.project) };
   const gone = new Set(missing);
   const lostImport = (id: string) => gone.has(id) && file.project.media[id].origin.kind === 'import';
   const media = Object.fromEntries(Object.entries(file.project.media).filter(([id]) => !lostImport(id)));
   const timeline = file.project.timeline.filter((clip) => !gone.has(clip.mediaId));
+  const layers = file.project.layers.map((layer) => ({
+    ...layer,
+    clips: layer.clips.filter((clip) => clip.source.kind !== 'media' || !gone.has(clip.source.mediaId)),
+  }));
+  const lostLayered = overlayCount(file.project.layers) - overlayCount(layers);
   const sfxMedia = Object.fromEntries(Object.entries(file.sfxMedia).filter(([, id]) => !gone.has(id)));
-  const lost = file.project.timeline.length - timeline.length + Object.keys(file.project.media).length - Object.keys(media).length;
+  const lost =
+    file.project.timeline.length -
+    timeline.length +
+    lostLayered +
+    Object.keys(file.project.media).length -
+    Object.keys(media).length;
 
   player.pause();
   forgetRenders();
   useStudio.setState({
-    project: { ...file.project, media, timeline },
+    project: { ...file.project, media, timeline, layers },
     sfxMedia,
     projectName: name,
     past: [],
     future: [],
     selection: null,
+    overlay: null,
     playhead: 0,
     loop: false,
     previewSource: null,
@@ -83,7 +98,7 @@ export async function openProject(): Promise<void> {
 
 export async function newProject(): Promise<void> {
   const { project } = useStudio.getState();
-  const hasWork = project.timeline.length + Object.keys(project.media).length > 0;
+  const hasWork = project.timeline.length + overlayCount(project.layers) + Object.keys(project.media).length > 0;
   if (await window.ytp.newProject(hasWork)) {
     show({ file: { project: blankProject(), sfxMedia: {} }, name: null, missing: [] });
   }

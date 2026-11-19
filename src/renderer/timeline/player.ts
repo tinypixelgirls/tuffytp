@@ -105,6 +105,11 @@ export class Player {
     this.setProgram(this.program, this.time);
   }
 
+  /** The video on screen right now, for drawing into the layer compositor. */
+  activeVideo(): HTMLVideoElement | null {
+    return this.current?.el ?? null;
+  }
+
   setVolume(volume: number): void {
     this.volume = volume;
     this.applyVolume();

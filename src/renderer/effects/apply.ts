@@ -1,4 +1,5 @@
 import { defaultParams, type EffectInfo, type EffectParams } from '../../shared/effects';
+import { findOverlay, updateOverlay } from '../../shared/layers';
 import type { Clip, EffectRenderResult, MediaFile, MediaOrigin } from '../../shared/types';
 import { savePins, useStudio } from '../store/project';
 import {
@@ -36,6 +37,9 @@ const rendered = new Map<string, EffectRenderResult>();
 
 /** The newest effect still in flight. The next one waits for it and stacks on its result. */
 let lastInChain: Promise<Target | null> | null = null;
+
+/** The same, for effects on a layer clip. Each waits for the one before it, then stacks. */
+let lastOnLayer: Promise<void> | null = null;
 
 const findEffect = (id: string): EffectInfo | undefined =>
   useStudio.getState().effects.find((effect) => effect.id === id);
@@ -126,6 +130,11 @@ function announce(effectId: string, { summary }: EffectRenderResult): void {
  * them up, each one stacking on the result of the one before it.
  */
 export function applyEffect(effectId: string, params: EffectParams, keepRoll = false): void {
+  const { overlay } = useStudio.getState();
+  if (overlay && !lastInChain) {
+    applyToLayerClip(overlay, effectId, params, keepRoll);
+    return;
+  }
   const previous = lastInChain;
   const selected = previous ? null : currentTarget();
   if (!previous && !selected) return;
@@ -147,9 +156,55 @@ export function applyEffect(effectId: string, params: EffectParams, keepRoll = f
   });
 }
 
+/** A layer clip's media as an effect target, or null for text and missing clips. */
+function layerTarget(clipId: string): Target | null {
+  const found = findOverlay(useStudio.getState().project.layers, clipId);
+  if (!found || found.clip.source.kind !== 'media') return null;
+  const { mediaId, in: start, out } = found.clip.source;
+  return { pieces: [{ clipId, mediaId, in: start, out }], range: { start: 0, end: out - start }, timeline: [] };
+}
+
+/**
+ * Renders a layer clip through an effect and points the clip at the result. Its place, motion
+ * and key stay as they are, so a keyed Luffy can be SUS'd without setting him up again.
+ */
+function applyToLayerClip(clipId: string, effectId: string, params: EffectParams, keepRoll: boolean): void {
+  if (!layerTarget(clipId)) {
+    useStudio.getState().pushToast('info', 'Effects work on video and picture layers. Text has nothing to render yet.');
+    return;
+  }
+  const done = queued(effectId);
+  const previous = lastOnLayer;
+  const run = (async () => {
+    await previous;
+    const target = layerTarget(clipId);
+    if (!target) return;
+    const result = await render(target, effectId, params, keepRoll);
+    if (!result) return;
+    announce(effectId, result);
+    const { project, commitLayers, pushToast } = useStudio.getState();
+    if (!findOverlay(project.layers, clipId)) {
+      pushToast('warning', 'That layer clip was deleted during the render, so the result was left out.');
+      return;
+    }
+    const layers = updateOverlay(project.layers, clipId, (clip) => ({
+      ...clip,
+      source: { kind: 'media', mediaId: result.media.id, in: 0, out: result.media.duration },
+    }));
+    commitLayers(layers, { overlay: clipId });
+  })();
+
+  lastOnLayer = run;
+  void run.finally(() => {
+    if (lastOnLayer === run) lastOnLayer = null;
+    done();
+  });
+}
+
 /** Renders the selection and plays the result without touching the timeline. */
 export async function previewEffect(effectId: string, params: EffectParams): Promise<void> {
-  const target = currentTarget();
+  const { overlay } = useStudio.getState();
+  const target = overlay ? layerTarget(overlay) : currentTarget();
   if (!target) return;
   const done = queued(effectId);
   try {

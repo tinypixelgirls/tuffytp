@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { defaultParams, type EffectInfo, type EffectParam, type EffectParams, type ParamValue } from '../../shared/effects';
 import { applyEffect, previewEffect } from '../effects/apply';
-import { useStudio } from '../store/project';
+import { hasEffectTarget, useStudio } from '../store/project';
 
 export function EffectParamsPopover({ effect, onClose }: { effect: EffectInfo; onClose(): void }) {
   const [values, setValues] = useState<EffectParams>(() => defaultParams(effect.params));
-  const hasSelection = useStudio((state) => state.selection !== null);
+  const hasSelection = useStudio(hasEffectTarget);
   const busy = useStudio((state) => state.effectQueue.includes(effect.id));
 
   const setValue = (key: string, value: ParamValue) => setValues((current) => ({ ...current, [key]: value }));

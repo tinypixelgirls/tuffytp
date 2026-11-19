@@ -9,12 +9,43 @@ import {
   markOut,
   splitAtPlayhead,
 } from './timeline/commands';
+import {
+  addTextAtPlayhead,
+  deleteSelectedOverlay,
+  duplicateSelectedOverlay,
+  splitSelectedOverlay,
+  toggleKeyframeAtPlayhead,
+} from './timeline/layers';
 import { stepBy, toggleLoop, toggleMute, togglePlay } from './timeline/transport';
+
+/** With a layer clip selected, the editing keys act on it rather than the main track. */
+function layerActionFor(key: string, event: KeyboardEvent): (() => void) | null {
+  if (event.ctrlKey || event.metaKey) return key === 'd' ? duplicateSelectedOverlay : null;
+  switch (key) {
+    case 'delete':
+    case 'backspace':
+      return deleteSelectedOverlay;
+    case 's':
+      return splitSelectedOverlay;
+    case 'k':
+      return event.repeat ? null : toggleKeyframeAtPlayhead;
+    case 'escape':
+      return () => useStudio.getState().selectOverlay(null);
+    default:
+      return null;
+  }
+}
 
 function actionFor(event: KeyboardEvent): (() => void) | null {
   const { fps } = useStudio.getState().project.settings;
-  const { undo, redo } = useStudio.getState();
+  const { undo, redo, overlay } = useStudio.getState();
   const key = event.key.toLowerCase();
+
+  const layerAction = overlay ? layerActionFor(key, event) : null;
+  if (layerAction) return layerAction;
+  if (key === 't' && !event.ctrlKey && !event.metaKey && useStudio.getState().project.timeline.length > 0) {
+    return addTextAtPlayhead;
+  }
 
   if (event.ctrlKey || event.metaKey) {
     if (key === 'z') return event.shiftKey ? redo : undo;

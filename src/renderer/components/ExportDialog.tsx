@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { overlayMediaIds } from '../../shared/layers';
 import type { ExportQuality, ExportResolution } from '../../shared/types';
 import { fileName } from '../format';
 import { useStudio } from '../store/project';
@@ -28,7 +29,12 @@ export function ExportDialog({ onClose }: { onClose(): void }) {
 
     setRunning(true);
     setFinished(null);
-    const result = await window.ytp.exportTimeline({ segments, settings, resolution, fps, quality, outputPath });
+    // Only the media the layers use goes along, not the whole bin.
+    const layerMedia = Object.fromEntries(
+      overlayMediaIds(project.layers).map((id) => [id, { path: project.media[id].path, duration: project.media[id].duration }]),
+    );
+    const composite = { layers: project.layers, media: layerMedia };
+    const result = await window.ytp.exportTimeline({ segments, settings, resolution, fps, quality, outputPath, composite });
     setRunning(false);
     setFinished(result);
   };

@@ -1,4 +1,5 @@
 import type { EffectInfo, EffectParams } from './effects';
+import type { Layer } from './layers';
 
 export type MediaId = string;
 
@@ -62,7 +63,10 @@ export interface Project {
   version: 1;
   settings: ProjectSettings;
   media: Record<MediaId, MediaFile>;
+  /** The main track: clips played back to back. It sets how long the video is. */
   timeline: Clip[];
+  /** Layers stacked over the main track, bottom first. */
+  layers: Layer[];
 }
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
@@ -116,6 +120,13 @@ export interface ExportRequest {
   fps: number;
   quality: ExportQuality;
   outputPath: string;
+  /** Layers to stack over the joined main track, with the media they use. */
+  composite?: CompositeRequest;
+}
+
+export interface CompositeRequest {
+  layers: Layer[];
+  media: Record<MediaId, Pick<MediaFile, 'path' | 'duration'>>;
 }
 
 /** Everything that outlives a launch of the app. */

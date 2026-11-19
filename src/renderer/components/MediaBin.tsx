@@ -6,6 +6,7 @@ import { fileName, formatTimecode } from '../format';
 import { newProject, openProject, saveProject } from '../persistence';
 import { importPaths, useStudio } from '../store/project';
 import { appendMedia } from '../timeline/commands';
+import { addMediaToLayer } from '../timeline/layers';
 import { SfxPanel } from './SfxPanel';
 
 export const MEDIA_DRAG_TYPE = 'application/x-ytp-media';
@@ -100,6 +101,7 @@ export function MediaBin() {
 function MediaCard({ media }: { media: MediaFile }) {
   const selected = useStudio((state) => state.previewSource?.mediaId === media.id);
   const playInPreview = useStudio((state) => state.playInPreview);
+  const hasTimeline = useStudio((state) => state.project.timeline.length > 0);
   const name = media.origin.kind === 'import' ? fileName(media.origin.sourcePath) : media.origin.effectId;
 
   // The sprite is a grid of tiles; scaling it to `cols` wide shows just the first one.
@@ -129,6 +131,15 @@ function MediaCard({ media }: { media: MediaFile }) {
         onClick={() => appendMedia([media.id])}
       >
         +
+      </button>
+      <button
+        className="add-button layer-add"
+        aria-label={`Put ${name} on a layer`}
+        title="Put it on a layer at the playhead, over the main track"
+        disabled={!hasTimeline}
+        onClick={() => addMediaToLayer(media.id, useStudio.getState().playhead)}
+      >
+        ⧉
       </button>
     </div>
   );

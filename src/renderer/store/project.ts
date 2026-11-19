@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { EffectInfo } from '../../shared/effects';
+import type { Layer } from '../../shared/layers';
 import type { Clip, JobState, MediaFile, MediaId, Project } from '../../shared/types';
 import { clamp, timelineDuration, type TimeRange } from '../timeline/model';
 
@@ -12,8 +13,19 @@ const TOAST_SECONDS = { info: 5, warning: 7, error: 12 };
  */
 interface Snapshot {
   timeline: Clip[];
+  layers: Layer[];
   selection: TimeRange | null;
+  overlay: string | null;
 }
+
+/**
+ * Dragging a slider makes dozens of edits. Ones that share a coalesce key in a row fold into
+ * a single undo step.
+ */
+let lastCoalesce: string | null = null;
+let lastCoalesceAt = 0;
+// A pause this long between edits starts a new undo step, even on the same slider.
+const COALESCE_MS = 800;
 
 const PINS_KEY = 'ytp.pins';
 const DEFAULT_PINS = ['sus', 'stutter', 'reverse', 'pitch-up', 'pitch-down', 'speed-up', 'earrape', 'staredown', 'chaos'];
@@ -71,6 +83,10 @@ interface StudioState {
   past: Snapshot[];
   future: Snapshot[];
   selection: TimeRange | null;
+  /** The layer clip being edited, by id. Only one of this and `selection` is set at a time. */
+  overlay: string | null;
+  /** Waiting for a click on the preview to choose the selected clip's key colour. */
+  pickingKey: boolean;
   playhead: number;
   playing: boolean;
   loop: boolean;
@@ -90,7 +106,9 @@ interface StudioState {
   playInPreview(mediaId: MediaId): void;
   showTimeline(): void;
   setSelection(selection: TimeRange | null): void;
+  selectOverlay(clipId: string | null): void;
   commit(timeline: Clip[], next?: { selection?: TimeRange | null; playhead?: number }): void;
+  commitLayers(layers: Layer[], next?: { overlay?: string | null; coalesce?: string }): void;
   undo(): void;
   redo(): void;
   /** Folds every undo step taken since `firstStep` into one. */
@@ -106,6 +124,7 @@ export const blankProject = (): Project => ({
   settings: { width: 1280, height: 720, fps: 30, sampleRate: 48000 },
   media: {},
   timeline: [],
+  layers: [],
 });
 
 export const useStudio = create<StudioState>((set, get) => ({
@@ -116,6 +135,8 @@ export const useStudio = create<StudioState>((set, get) => ({
   past: [],
   future: [],
   selection: null,
+  overlay: null,
+  pickingKey: false,
   playhead: 0,
   playing: false,
   loop: false,
@@ -141,42 +162,73 @@ export const useStudio = create<StudioState>((set, get) => ({
 
   showTimeline: () => set((state) => (state.previewSource ? { previewSource: null } : state)),
 
-  setSelection: (selection) => set({ selection }),
+  setSelection: (selection) => set((state) => ({ selection, overlay: selection ? null : state.overlay })),
 
-  commit: (timeline, next = {}) =>
-    set(({ project, past, selection, playhead }) => ({
+  selectOverlay: (overlay) =>
+    set((state) => ({ overlay, selection: overlay ? null : state.selection, pickingKey: false })),
+
+  commit: (timeline, next = {}) => {
+    lastCoalesce = null;
+    set(({ project, past, selection, overlay, playhead }) => ({
       project: { ...project, timeline },
-      past: [...past, { timeline: project.timeline, selection }].slice(-HISTORY_LIMIT),
+      past: [...past, { timeline: project.timeline, layers: project.layers, selection, overlay }].slice(-HISTORY_LIMIT),
       future: [],
       selection: next.selection ?? null,
+      overlay: next.selection ? null : overlay,
       playhead: clamp(next.playhead ?? playhead, 0, timelineDuration(timeline)),
-    })),
+    }));
+  },
 
-  undo: () =>
-    set(({ project, past, future, selection, playhead }) => {
+  commitLayers: (layers, next = {}) => {
+    const now = performance.now();
+    const fold = next.coalesce !== undefined && next.coalesce === lastCoalesce && now - lastCoalesceAt < COALESCE_MS;
+    lastCoalesce = next.coalesce ?? null;
+    lastCoalesceAt = now;
+    set(({ project, past, future, selection, overlay }) => {
+      const nextOverlay = next.overlay === undefined ? overlay : next.overlay;
+      return {
+        project: { ...project, layers },
+        past: fold
+          ? past
+          : [...past, { timeline: project.timeline, layers: project.layers, selection, overlay }].slice(-HISTORY_LIMIT),
+        future: fold ? future : [],
+        overlay: nextOverlay,
+        selection: nextOverlay ? null : selection,
+      };
+    });
+  },
+
+  undo: () => {
+    lastCoalesce = null;
+    set(({ project, past, future, selection, overlay, playhead }) => {
       const snapshot = past[past.length - 1];
       if (!snapshot) return {};
       return {
-        project: { ...project, timeline: snapshot.timeline },
+        project: { ...project, timeline: snapshot.timeline, layers: snapshot.layers },
         past: past.slice(0, -1),
-        future: [...future, { timeline: project.timeline, selection }],
+        future: [...future, { timeline: project.timeline, layers: project.layers, selection, overlay }],
         selection: snapshot.selection,
+        overlay: snapshot.overlay,
         playhead: clamp(playhead, 0, timelineDuration(snapshot.timeline)),
       };
-    }),
+    });
+  },
 
-  redo: () =>
-    set(({ project, past, future, selection, playhead }) => {
+  redo: () => {
+    lastCoalesce = null;
+    set(({ project, past, future, selection, overlay, playhead }) => {
       const snapshot = future[future.length - 1];
       if (!snapshot) return {};
       return {
-        project: { ...project, timeline: snapshot.timeline },
-        past: [...past, { timeline: project.timeline, selection }],
+        project: { ...project, timeline: snapshot.timeline, layers: snapshot.layers },
+        past: [...past, { timeline: project.timeline, layers: project.layers, selection, overlay }],
         future: future.slice(0, -1),
         selection: snapshot.selection,
+        overlay: snapshot.overlay,
         playhead: clamp(playhead, 0, timelineDuration(snapshot.timeline)),
       };
-    }),
+    });
+  },
 
   collapseHistory: (firstStep) => set(({ past }) => ({ past: past.slice(0, firstStep + 1) })),
 
@@ -198,6 +250,15 @@ export const useStudio = create<StudioState>((set, get) => ({
 
   dismissToast: (id) => set(({ toasts }) => ({ toasts: toasts.filter((toast) => toast.id !== id) })),
 }));
+
+/** Whether effect buttons have something to hit: a stretch of the main track, or a video layer clip. */
+export function hasEffectTarget(state: Pick<StudioState, 'selection' | 'overlay' | 'project'>): boolean {
+  if (state.selection) return true;
+  if (!state.overlay) return false;
+  return state.project.layers.some((layer) =>
+    layer.clips.some((clip) => clip.id === state.overlay && clip.source.kind === 'media'),
+  );
+}
 
 /** Resolves to what imported successfully, in the order the paths were given. */
 export async function importPaths(paths: string[]): Promise<MediaFile[]> {

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { overlayMediaIds } from '../../shared/layers';
 import { forgetRenders } from '../effects/apply';
 import { useStudio } from '../store/project';
 import { ProgressBar } from './MediaBin';
@@ -9,13 +10,14 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 }
 
-/** Everything the project could still need: the bin, the timeline, and every undo step. */
+/** Everything the project could still need: the bin, the timeline, the layers, and every undo step. */
 function mediaInUse(): string[] {
   const { project, past, future } = useStudio.getState();
   const imports = Object.values(project.media).filter((media) => media.origin.kind === 'import');
-  const timelines = [project.timeline, ...past.map((step) => step.timeline), ...future.map((step) => step.timeline)];
-  const clips = timelines.flat().map((clip) => clip.mediaId);
-  return [...new Set([...imports.map((media) => media.id), ...clips])];
+  const steps = [project, ...past, ...future];
+  const clips = steps.flatMap((step) => step.timeline).map((clip) => clip.mediaId);
+  const layered = steps.flatMap((step) => overlayMediaIds(step.layers));
+  return [...new Set([...imports.map((media) => media.id), ...clips, ...layered])];
 }
 
 export function StatusBar() {

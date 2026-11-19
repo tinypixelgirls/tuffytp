@@ -35,8 +35,10 @@ import {
   wordBounds,
 } from '../timeline/model';
 import { seekTimeline, toggleLoop } from '../timeline/transport';
+import { addLayer, addTextAtPlayhead } from '../timeline/layers';
 import { mediaForSfx } from '../sfx';
 import { ExportDialog } from './ExportDialog';
+import { LayerLanes } from './LayerLanes';
 import { MEDIA_DRAG_TYPE, SFX_DRAG_TYPE } from './MediaBin';
 
 const MIN_ZOOM = 0.5;
@@ -77,6 +79,7 @@ export function Timeline() {
   const scrollerRef = useRef<HTMLDivElement>(null);
 
   const [zoom, setZoom] = useState(100);
+  const [scrollX, setScrollX] = useState(0);
   const [viewWidth, setViewWidth] = useState(0);
   const [exporting, setExporting] = useState(false);
   const viewRef = useRef<View>({ pxPerSec: zoom, scrollX: 0, width: 0, height: 0 });
@@ -160,6 +163,7 @@ export function Timeline() {
       pendingScrollRef.current = null;
     }
     viewRef.current.scrollX = scroller.scrollLeft;
+    setScrollX(scroller.scrollLeft);
     requestDraw(true);
   }, [zoom, spacerWidth, requestDraw]);
 
@@ -172,35 +176,43 @@ export function Timeline() {
     setZoom(next);
   }, []);
 
+  /** Resolves to whether it could fit: it can't before the panel has been measured. */
   const fitToView = useCallback(() => {
     const seconds = timelineDuration(useStudio.getState().project.timeline);
-    if (seconds === 0) return;
+    if (seconds === 0 || viewRef.current.width === 0) return false;
     scrollerRef.current!.scrollLeft = 0;
     viewRef.current.scrollX = 0;
     applyZoom((viewRef.current.width - 40) / seconds, 0);
+    return true;
   }, [applyZoom]);
 
-  // The first clip gets fitted to the window; after that, the zoom is left alone.
+  // The first clip gets fitted to the window; after that, the zoom is left alone. A restored
+  // project can arrive before the panel has a size, so the fit waits for one.
   const hadClips = useRef(false);
   useEffect(() => {
-    if (clipCount > 0 && !hadClips.current) fitToView();
-    hadClips.current = clipCount > 0;
-  }, [clipCount, fitToView]);
+    if (clipCount === 0) hadClips.current = false;
+    else if (!hadClips.current) hadClips.current = fitToView();
+  }, [clipCount, viewWidth, fitToView]);
 
-  useEffect(() => {
-    const wrap = wrapRef.current!;
-    const onWheel = (event: WheelEvent) => {
+  /** Ctrl+wheel zooms around the pointer; a plain wheel scrolls. The layer lanes share it. */
+  const onWheel = useCallback(
+    (event: WheelEvent) => {
       event.preventDefault();
       if (event.ctrlKey) {
-        const anchorX = event.clientX - wrap.getBoundingClientRect().left;
+        const anchorX = event.clientX - wrapRef.current!.getBoundingClientRect().left;
         applyZoom(viewRef.current.pxPerSec * Math.exp(-event.deltaY * WHEEL_ZOOM_SPEED), anchorX);
       } else {
         scrollerRef.current!.scrollLeft += event.deltaY + event.deltaX;
       }
-    };
+    },
+    [applyZoom],
+  );
+
+  useEffect(() => {
+    const wrap = wrapRef.current!;
     wrap.addEventListener('wheel', onWheel, { passive: false });
     return () => wrap.removeEventListener('wheel', onWheel);
-  }, [applyZoom]);
+  }, [onWheel]);
 
   function followPlayhead(time: number) {
     const view = viewRef.current;
@@ -303,6 +315,7 @@ export function Timeline() {
 
     if (drag.kind === 'select' && !drag.moved) {
       setSelection(null);
+      useStudio.getState().selectOverlay(null);
       seekTimeline(timeAtX(x));
     } else if (drag.kind === 'select') {
       useStudio.getState().showTimeline();
@@ -348,6 +361,7 @@ export function Timeline() {
 
   const onScroll = () => {
     viewRef.current.scrollX = scrollerRef.current!.scrollLeft;
+    setScrollX(scrollerRef.current!.scrollLeft);
     requestDraw(true);
   };
 
@@ -417,6 +431,13 @@ export function Timeline() {
           Loop
         </button>
         <span className="tool-gap" />
+        <button className="tool" disabled={clipCount === 0} title="Add an empty layer on top" onClick={addLayer}>
+          + Layer
+        </button>
+        <button className="tool" disabled={clipCount === 0} title="Add a text caption at the playhead (T)" onClick={addTextAtPlayhead}>
+          + Text
+        </button>
+        <span className="tool-gap" />
         <button className="tool" disabled={!canUndo} title="Undo (Ctrl+Z)" onClick={undo}>
           Undo
         </button>
@@ -424,7 +445,7 @@ export function Timeline() {
           Redo
         </button>
         <span className="zoom">
-          <button className="tool" disabled={clipCount === 0} title="Fit the whole timeline" onClick={fitToView}>
+          <button className="tool" disabled={clipCount === 0} title="Fit the whole timeline" onClick={() => fitToView()}>
             Fit
           </button>
           <input
@@ -442,6 +463,7 @@ export function Timeline() {
           </button>
         </span>
       </div>
+      <LayerLanes pxPerSec={zoom} scrollX={scrollX} duration={duration} onWheel={onWheel} />
       <div className="timeline-canvas" ref={wrapRef}>
         <canvas ref={baseRef} />
         <canvas
