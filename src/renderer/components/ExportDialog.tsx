@@ -31,7 +31,10 @@ export function ExportDialog({ onClose }: { onClose(): void }) {
     setFinished(null);
     // Only the media the layers use goes along, not the whole bin.
     const layerMedia = Object.fromEntries(
-      overlayMediaIds(project.layers).map((id) => [id, { path: project.media[id].path, duration: project.media[id].duration }]),
+      overlayMediaIds(project.layers).map((id) => {
+        const { path, duration, alphaPath } = project.media[id];
+        return [id, { path, duration, alphaPath }];
+      }),
     );
     const composite = { layers: project.layers, media: layerMedia };
     const result = await window.ytp.exportTimeline({ segments, settings, resolution, fps, quality, outputPath, composite });

@@ -13,8 +13,8 @@ import {
   type TextStyle,
   type Transform,
 } from '../../shared/layers';
-import { MEDIA_FILE, mediaUrl } from '../../shared/media';
-import type { ProjectSettings } from '../../shared/types';
+import { ALPHA_FILE, MEDIA_FILE, mediaUrl } from '../../shared/media';
+import type { MediaFile, MediaId, ProjectSettings } from '../../shared/types';
 import { useStudio } from '../store/project';
 import { player } from './transport';
 
@@ -60,7 +60,7 @@ export function textLines(style: TextStyle, height: number) {
 
 interface Pooled {
   el: HTMLVideoElement;
-  mediaId: string;
+  url: string;
 }
 
 export class Compositor {
@@ -114,14 +114,21 @@ export class Compositor {
       this.pauseAll();
       return;
     }
-    this.syncVideos(project.layers, playhead, playing, state.muted ? 0 : state.volume, project.settings);
+    this.syncVideos(project.layers, project.media, playhead, playing, state.muted ? 0 : state.volume, project.settings);
     if (!playing && !this.dirty) return;
     this.dirty = false;
     this.draw(project.layers, playhead, project.settings, state.overlay);
   };
 
   /** Keeps each layer clip's video at the playhead, and loads the ones about to start. */
-  private syncVideos(layers: Layer[], time: number, playing: boolean, volume: number, settings: ProjectSettings): void {
+  private syncVideos(
+    layers: Layer[],
+    media: Record<MediaId, MediaFile>,
+    time: number,
+    playing: boolean,
+    volume: number,
+    settings: ProjectSettings,
+  ): void {
     const wanted = new Set<string>();
     for (const { layer, clip } of visibleOverlays(layers)) {
       const { source } = clip;
@@ -132,7 +139,9 @@ export class Compositor {
       if (!live && !soon) continue;
       wanted.add(clip.id);
 
-      const pooled = this.videoFor(clip.id, source.mediaId);
+      // Transparent media plays from its VP9 copy, which Chromium decodes with the alpha.
+      const file = media[source.mediaId]?.alphaPath ? ALPHA_FILE : MEDIA_FILE;
+      const pooled = this.videoFor(clip.id, mediaUrl(source.mediaId, file));
       const { el } = pooled;
       const target = source.in + Math.max(0, local);
       el.muted = layer.muted || clip.volume <= 0 || volume <= 0;
@@ -161,9 +170,9 @@ export class Compositor {
     }
   }
 
-  private videoFor(clipId: string, mediaId: string): Pooled {
+  private videoFor(clipId: string, url: string): Pooled {
     const existing = this.pool.get(clipId);
-    if (existing && existing.mediaId === mediaId) return existing;
+    if (existing && existing.url === url) return existing;
     if (existing) this.release(existing.el);
 
     const el = document.createElement('video');
@@ -171,9 +180,9 @@ export class Compositor {
     el.crossOrigin = 'anonymous';
     el.preload = 'auto';
     el.playsInline = true;
-    el.src = mediaUrl(mediaId, MEDIA_FILE);
+    el.src = url;
     for (const event of ['seeked', 'loadeddata']) el.addEventListener(event, this.markDirty);
-    const pooled = { el, mediaId };
+    const pooled = { el, url };
     this.pool.set(clipId, pooled);
     return pooled;
   }

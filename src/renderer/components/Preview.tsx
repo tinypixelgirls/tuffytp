@@ -1,6 +1,6 @@
 import { useEffect, useRef, type DragEvent, type PointerEvent, type WheelEvent } from 'react';
 import { clamp, editTransform, findOverlay, transformAt, type Transform } from '../../shared/layers';
-import { fileName, formatTimecode } from '../format';
+import { formatTimecode, mediaName } from '../format';
 import { mediaForSfx } from '../sfx';
 import { importPaths, useStudio } from '../store/project';
 import { Compositor, compositor, overlayAt } from '../timeline/compositor';
@@ -52,9 +52,8 @@ export function Preview() {
   const hasClips = useStudio((state) => state.project.timeline.length > 0);
   const compositing = useStudio((state) => Compositor.active(state.project.layers, state.previewSource !== null));
   const picking = useStudio((state) => state.pickingKey);
-  const sourceOrigin = useStudio((state) =>
-    state.previewSource ? state.project.media[state.previewSource.mediaId].origin : null,
-  );
+  const sourceMedia = useStudio((state) => (state.previewSource ? state.project.media[state.previewSource.mediaId] : null));
+  const sourceOrigin = sourceMedia?.origin ?? null;
 
   useEffect(() => {
     player.attach(firstRef.current!, secondRef.current!);
@@ -65,7 +64,7 @@ export function Preview() {
     };
   }, []);
 
-  const sourceName = sourceOrigin?.kind === 'import' ? fileName(sourceOrigin.sourcePath) : sourceOrigin?.effectId;
+  const sourceName = sourceMedia ? mediaName(sourceMedia) : '';
 
   const onPointerDown = (event: PointerEvent<HTMLCanvasElement>) => {
     if (event.button !== 0) return;

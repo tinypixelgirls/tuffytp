@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent, type PointerEvent } from 'react';
 import { isAnimated, overlayDuration, trimmedOverlay, updateOverlay, type Layer, type OverlayClip } from '../../shared/layers';
-import { fileName } from '../format';
+import { mediaName } from '../format';
 import { mediaForSfx } from '../sfx';
 import { importPaths, useStudio } from '../store/project';
 import { addMediaToLayer, moveLayer, moveOverlay, removeLayer, updateLayer } from '../timeline/layers';
@@ -31,9 +31,7 @@ interface Draft {
 
 function clipLabel(clip: OverlayClip): string {
   if (clip.source.kind === 'text') return `T  ${clip.source.style.text.replace(/\s+/g, ' ')}`;
-  const media = useStudio.getState().project.media[clip.source.mediaId];
-  if (!media) return 'Missing';
-  return media.origin.kind === 'import' ? fileName(media.origin.sourcePath) : `${media.origin.effectId} render`;
+  return mediaName(useStudio.getState().project.media[clip.source.mediaId]);
 }
 
 async function droppedMedia(event: DragEvent): Promise<string | null> {

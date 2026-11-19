@@ -1,15 +1,24 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import type {
+  CutoutPoint,
+  CutoutSaveOptions,
+  CutoutSession,
   EffectRenderRequest,
   EffectRenderResult,
   ExportRequest,
+  JobState,
   MediaFile,
   ProjectFile,
   ProjectSettings,
+  RenderPiece,
 } from '../shared/types';
-import { cacheSize, clearCache, createMediaDir, exportWorkDir, removeMediaDir } from './cache';
+import { AiSidecar, aiPaths, aiStatus, installAiPack, removeAiPack, SAM2_CONFIG } from './ai';
+import serverSource from './ai/script';
+import { cacheSize, clearCache, createMediaDir, exportWorkDir, projectCacheDir, removeMediaDir } from './cache';
+import { closeAllCutouts, closeCutout, openCutout, openCutoutFolders, saveCutout, setCutoutPoints, trackCutout } from './cutout';
 import { availableEffects, getEffect, toEffectInfo } from './effects';
 import type { Effect } from './effects/types';
 import { runExport } from './export';
@@ -31,7 +40,24 @@ let mainWindow: BrowserWindow | null = null;
 let filters = new Set<string>();
 let effectPool: Effect[] = [];
 
-const jobs = new JobQueue((job) => mainWindow?.webContents.send('job:update', job));
+const sendJob = (job: JobState) => mainWindow?.webContents.send('job:update', job);
+const jobs = new JobQueue(sendJob);
+// The AI gets its own line: a big download or a long track shouldn't hold up renders.
+const aiJobs = new JobQueue(sendJob);
+
+const aiRoot = () => join(app.getPath('userData'), 'ai');
+let sidecar: AiSidecar | null = null;
+
+/** The AI helper, started on first use and kept running so the model loads once. */
+async function aiHelper(): Promise<AiSidecar> {
+  if (sidecar) return sidecar;
+  const paths = aiPaths(aiRoot());
+  if (!(await aiStatus(aiRoot())).installed) throw new Error('The AI pack is not installed.');
+  // Rewritten every launch, so an app update brings the helper's changes with it.
+  await writeFile(paths.server, serverSource);
+  sidecar = new AiSidecar(paths.python, [paths.server, '--checkpoint', paths.checkpoint, '--config', SAM2_CONFIG]);
+  return sidecar;
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -190,9 +216,54 @@ function registerIpc(): void {
   });
 
   ipcMain.handle('cache:size', () => cacheSize());
-  ipcMain.handle('cache:clear', (_event, keep: string[]) => clearCache(new Set(keep)));
+  ipcMain.handle('cache:clear', (_event, keep: string[]) => clearCache(new Set([...keep, ...openCutoutFolders()])));
 
-  ipcMain.handle('job:cancel', (_event, jobId: string) => jobs.cancel(jobId));
+  ipcMain.handle('job:cancel', (_event, jobId: string) => {
+    jobs.cancel(jobId);
+    aiJobs.cancel(jobId);
+  });
+
+  ipcMain.handle('ai:status', () => aiStatus(aiRoot()));
+
+  ipcMain.handle('ai:install', () =>
+    aiJobs
+      .add('ai', 'AI pack', (ctx) => installAiPack(aiRoot(), serverSource, ctx))
+      .then(() => true)
+      .catch(() => false),
+  );
+
+  ipcMain.handle('ai:remove', async () => {
+    sidecar?.stop();
+    sidecar = null;
+    await removeAiPack(aiRoot());
+  });
+
+  ipcMain.handle(
+    'cutout:open',
+    (_event, pieces: RenderPiece[], settings: ProjectSettings): Promise<CutoutSession | null> =>
+      aiJobs
+        .add('cutout', 'Cutout', async (ctx) => openCutout(projectCacheDir(), pieces, settings, await aiHelper(), ctx))
+        .catch(() => null),
+  );
+
+  ipcMain.handle('cutout:points', async (_event, id: string, frame: number, points: CutoutPoint[]) =>
+    setCutoutPoints(id, frame, points, await aiHelper()),
+  );
+
+  ipcMain.handle('cutout:track', (_event, id: string) =>
+    aiJobs
+      .add('cutout', 'Tracking', async (ctx) => trackCutout(id, await aiHelper(), ctx))
+      .then(() => true)
+      .catch(() => false),
+  );
+
+  ipcMain.handle(
+    'cutout:save',
+    (_event, id: string, options: CutoutSaveOptions): Promise<MediaFile | null> =>
+      mediaJob('render', 'Saving cutout', (mediaId, dir, ctx) => saveCutout(id, mediaId, dir, options, ctx)),
+  );
+
+  ipcMain.handle('cutout:close', (_event, id: string) => closeCutout(id, sidecar));
 }
 
 // The app was called YTP Studio first, and its projects and settings still live under that name.
@@ -226,4 +297,9 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => jobs.cancelAll());
+app.on('before-quit', () => {
+  jobs.cancelAll();
+  aiJobs.cancelAll();
+  void closeAllCutouts(null);
+  sidecar?.stop();
+});

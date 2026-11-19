@@ -11,6 +11,8 @@ const CONTENT_TYPES: Record<string, string> = {
   '.mp4': 'video/mp4',
   '.jpg': 'image/jpeg',
   '.json': 'application/json',
+  '.png': 'image/png',
+  '.webm': 'video/webm',
 };
 
 /** Must run before the app is ready. */

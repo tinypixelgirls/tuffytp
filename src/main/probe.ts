@@ -7,7 +7,19 @@ const exec = promisify(execFile);
 export interface ProbeResult {
   /** Seconds, or 0 when the container doesn't say. */
   duration: number;
-  video?: { index: number; width: number; height: number; fps: number };
+  video?: {
+    index: number;
+    width: number;
+    height: number;
+    fps: number;
+    /** Whether the picture has transparency in it. */
+    alpha: boolean;
+    /**
+     * VP9 keeps its alpha in a side channel that ffmpeg's own decoder throws away, so these
+     * have to be read with libvpx.
+     */
+    needsLibvpx: boolean;
+  };
   audio?: { index: number };
 }
 
@@ -19,7 +31,18 @@ interface RawStream {
   avg_frame_rate?: string;
   r_frame_rate?: string;
   duration?: string;
+  codec_name?: string;
+  pix_fmt?: string;
+  tags?: Record<string, string>;
   disposition?: { attached_pic?: number };
+}
+
+// Pixel formats with an alpha channel: rgba, yuva420p, argb, ya8, gbrap and the like.
+const ALPHA_FORMAT = /^(yuva|gbrap|ya\d)|a(rgb|bgr)|(rgb|bgr)a/;
+
+function vp9Alpha(stream: RawStream): boolean {
+  const mode = Object.entries(stream.tags ?? {}).find(([key]) => key.toLowerCase() === 'alpha_mode')?.[1];
+  return stream.codec_name === 'vp9' && mode === '1';
 }
 
 function parseRate(rate: string | undefined): number {
@@ -47,6 +70,12 @@ export async function probe(path: string): Promise<ProbeResult> {
       width: video.width ?? 0,
       height: video.height ?? 0,
       fps: parseRate(video.avg_frame_rate) || parseRate(video.r_frame_rate),
+      // Paletted PNGs and GIFs can carry transparency in the palette, which pix_fmt doesn't show.
+      alpha:
+        ALPHA_FORMAT.test(video.pix_fmt ?? '') ||
+        vp9Alpha(video) ||
+        (video.pix_fmt === 'pal8' && ['png', 'gif'].includes(video.codec_name ?? '')),
+      needsLibvpx: vp9Alpha(video),
     },
     audio: audio && { index: audio.index },
   };

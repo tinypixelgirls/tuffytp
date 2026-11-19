@@ -25,38 +25,44 @@ Shortcuts with a layer clip selected: **K** keyframe, **S** split, **Delete** de
 
 ---
 
-## Milestone 2 — Transparent media (alpha)
+## Milestone 2 — Transparent media (alpha) ✅ built
 
-Cutouts need real transparency, not just a key colour. Zoro's hair is green, so a green screen eats his head.
+Zoro's hair is green, so cutouts need real transparency, not just a key colour.
 
-- Add an optional alpha track to `MediaFile`: `alpha?: true`, stored as **`media.webm`, VP9 with `yuva420p`**. Chromium plays VP9 alpha in `<video>`, and drawing it to canvas keeps the transparency, so the preview needs no changes beyond picking the file.
-- ffmpeg only keeps VP9 alpha when decoding with `-c:v libvpx-vp9` (the built-in decoder drops it). Put that before `-i` for alpha inputs in `planComposite`, then `format=rgba` as now.
-- Effects on alpha media: each effect builds its filter for `[0:v]`. Route alpha through by splitting `alphaextract` off before the effect and `alphamerge` after it, for effects whose timing the alpha can follow: everything except purely audio effects, which pass video through anyway. Otherwise flatten to green and say so in a toast.
-- "**Bake onto colour**" command: turns alpha media into a green (or magenta) screen clip, for sharing outside the app.
-
-*Done when:* a PNG with transparency and a transparent WebM import, sit on a layer, and export correctly.
+- `MediaFile.alphaPath` points at **`alpha.webm`**, which is VP9 with `yuva420p` plus Opus sound, next to the usual `media.mp4`. Layers use the transparent copy. The main track, bin thumbnails and waveforms keep using `media.mp4`, where the see-through parts are filled with a solid colour.
+- **Import**: PNGs, GIFs and VP9 WebMs with alpha (anything ffprobe reports with an alpha pixel format, `alpha_mode=1`, or a paletted PNG/GIF) get the transparent copy as well. The house file fills the clear parts with black (`premultiply`).
+- ffmpeg only keeps VP9 alpha when reading with **`-c:v libvpx-vp9`** (its own decoder drops it), so every read of `alpha.webm` goes through `alphaInputArgs`.
+- **Preview**: Chromium plays VP9 alpha in `<video>`, and `drawImage` keeps the transparency, so the compositor just picks `alpha.webm`.
+- **Effects on transparent layer clips** (`keepAlpha`): the render reads the transparent copy and writes both files in one ffmpeg run (`AlphaOutput: 'both'`). CHAOS passes in between stay transparent. Timing effects like SUS, STUTTER and REVERSE keep the alpha. An effect whose filters can't carry alpha comes out opaque, which is still usable.
+- Tests: `tests/alpha.int.test.ts`.
 
 ---
 
-## Milestone 3 — Cutout tool (AI add-on)
+## Milestone 3 — Cutout tool (AI add-on) ✅ built (real-model path untested, see below)
 
 Click a character and get them out of the scene for the whole shot.
 
-**Model:** SAM 2.1 (Meta, Apache-2.0). Its small and base+ sizes run comfortably in 8 GB; SAM 3 adds text prompts ("straw hat boy") but wants ~12 GB, so it's an option for later or for a bigger GPU. Anime is a good case for these models because of the flat colours and hard outlines. For soft edges (hair, smoke, Gear 5 clouds), an optional matting refiner (MatAnyone 2 or VideoMaMa) can turn the mask into a soft alpha.
+**Model:** SAM 2.1 small (Meta, Apache-2.0), from the `sam2` package on PyPI with the official `sam2.1_hiera_small.pt` checkpoint. It runs in float32 on Turing cards like the RTX 2070, and switches to bfloat16 autocast on Ampere and newer.
 
-**Packaging, keeping the app small:**
-- The app ships without Python. The first time you open the cutout tool, it offers to download the **TuffYTP AI pack**: an embeddable Python, PyTorch (CUDA), and the SAM 2.1 weights, into `userData/ai/`. It's a few GB, with a progress bar, resumable, and deletable from settings.
-- A **sidecar process** (`ai/server.py`) speaks JSON over stdin/stdout, like ffmpeg jobs do now: `load_video`, `add_points`, `propagate`, `export_mask`, with progress lines. It runs through the existing `JobQueue`, so cancel works.
-- No GPU, or not enough VRAM: fall back to the tiny model on CPU with a warning that it's slow.
+**AI pack** (`src/main/ai.ts`): optional, installed into `userData/ai/` from inside the app, and removable from the cutout studio:
+1. Downloads **uv** from GitHub releases and unpacks it (`tar` reads zips on Windows 10 and later).
+2. `uv venv --python 3.11`: a private Python, with uv's cache and Python kept inside the folder.
+3. PyTorch: the CUDA 12.6 build when `nvidia-smi` finds a card, otherwise the CPU build.
+4. `sam2==1.1.0` with `SAM2_BUILD_CUDA=0` and `--no-build-isolation`, so no compiler is needed.
+5. The checkpoint, from `dl.fbaipublicfiles.com`.
+6. Starts the helper once to prove it works, and records the GPU name in `ready.json`.
 
-**UX:**
-1. Select a stretch of the main track (one shot works best; see Milestone 4) and press **✂ CUT OUT**.
-2. A cutout view opens on the first frame. Left-click adds what to keep, right-click adds what to drop. The mask previews live.
-3. **Track** runs the model through the selection. Scrub to check it, add fix-up clicks on any frame, and track again.
-4. **Save** makes transparent media (Milestone 2) and puts it in the bin, tagged with the episode and timestamp. It can also drop it straight onto a layer over the original, lined up.
-5. Options: grow or shrink the edge, feather it, and "keep the whole frame but blur or erase the character" (a clean plate) for swapping someone out of a scene.
+Each step can be re-run, so a failed or cancelled install resumes. AI jobs run on their own queue, so a big download doesn't hold up renders.
 
-*Done when:* five clicks get Luffy out of a 3-second shot cleanly enough to use as a running gag.
+**Helper** (`src/main/ai/server.py`, bundled with Vite `?raw` and written out at launch): JSON lines over stdin/stdout. Commands are `open`, `points`, `track` (with progress) and `close`. It stays running, so the model only loads once. `--fake` cuts by colour instead of using the model, which lets the app's tests drive the whole pipeline without PyTorch.
+
+**Pipeline** (`src/main/cutout.ts`): the selection (joined first if it spans clips) is pulled out as JPEG frames. Clicks go to the model, which writes one mask PNG per frame. Tracking propagates forward from the first clicked frame, then backward. Saving merges the masks with the **original video** (not the JPEGs) using `alphamerge`, after optional grow/shrink (`dilation`/`erosion`) and feathering (`gblur`). It writes the transparent copy plus a flat copy on green, magenta or blue. The result is new media with `origin.kind = 'cutout'`.
+
+**Studio** (`CutoutStudio.tsx`): the **✂ Cut out** button sits in the timeline toolbar and works on selections of 30 s or less. Left click keeps, right click cuts away, and clicking a dot removes it. There's a frame scrubber, a mask view and a cut-out-on-checkerboard view, and a "track again" hint after changing dots. **Save** puts the cutout in the bin (cutouts show there, like imports) and, by default, on a layer, full frame and lined up in time over the original.
+
+**Not tested yet:** the installer's downloads and the real SAM 2.1 backend could only be written here, not run, because there was no network or GPU. The test suite runs the full UI → helper → masks → transparent media path with the fake backend. First things to check on a real PC: the install finishes, the GPU name shows in the studio header, and clicking Luffy gives a sensible mask.
+
+Later: a matting refiner (MatAnyone 2 / VideoMaMa) for soft edges, several characters per cutout, a clean plate (erase the character instead of keeping them), and SAM 3 text prompts on bigger GPUs.
 
 ---
 

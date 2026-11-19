@@ -1,6 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
-import { MEDIA_FILE, PEAKS_FILE, THUMBS_FILE } from '../shared/media';
+import { ALPHA_FILE, MEDIA_FILE, PEAKS_FILE, THUMBS_FILE } from '../shared/media';
 import type {
   MediaFile,
   MediaId,
@@ -45,12 +45,33 @@ export function houseEncodeArgs(settings: ProjectSettings): string[] {
   ];
 }
 
-export function buildNormalizeArgs(
-  sourcePath: string,
-  source: ProbeResult,
-  settings: ProjectSettings,
-  outPath: string,
-): string[] {
+/**
+ * Encoder settings for the transparent copy: VP9 with alpha, which Chromium plays with its
+ * transparency intact. Opus carries the sound so a layer can play from this one file.
+ */
+export function alphaEncodeArgs(settings: ProjectSettings): string[] {
+  return [
+    '-c:v', 'libvpx-vp9',
+    '-pix_fmt', 'yuva420p',
+    // libvpx can't keep alpha with alternate reference frames turned on.
+    '-auto-alt-ref', '0',
+    '-crf', '28',
+    '-b:v', '0',
+    '-deadline', 'good',
+    '-cpu-used', '5',
+    '-row-mt', '1',
+    '-r', String(settings.fps),
+    '-c:a', 'libopus',
+    '-b:a', '160k',
+    '-ar', '48000',
+    '-ac', '2',
+  ];
+}
+
+/** Input options for reading a transparent copy back with its alpha. */
+export const alphaInputArgs = (path: string): string[] => ['-c:v', 'libvpx-vp9', '-i', path];
+
+function sourceInputs(sourcePath: string, source: ProbeResult, settings: ProjectSettings) {
   const { width, height, fps, sampleRate } = settings;
   const silence = `anullsrc=channel_layout=stereo:sample_rate=${sampleRate}`;
   const black = `color=c=black:s=${width}x${height}:r=${fps}`;
@@ -59,6 +80,7 @@ export function buildNormalizeArgs(
   const maps: string[] = [];
   if (source.video) {
     if (isStillImage(sourcePath)) inputs.push('-loop', '1', '-framerate', String(fps), '-t', String(STILL_SECONDS));
+    if (source.video.needsLibvpx) inputs.push('-c:v', 'libvpx-vp9');
     inputs.push('-i', sourcePath);
     maps.push('-map', `0:${source.video.index}`);
     if (source.audio) {
@@ -73,17 +95,50 @@ export function buildNormalizeArgs(
     inputs.push('-f', 'lavfi', ...length, '-i', black, '-i', sourcePath);
     maps.push('-map', '0:v', '-map', `1:${source.audio!.index}`);
   }
+  return { inputs, maps };
+}
+
+const fitFilter = ({ width, height }: ProjectSettings, pad: string) =>
+  `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=${pad}`;
+
+export function buildNormalizeArgs(
+  sourcePath: string,
+  source: ProbeResult,
+  settings: ProjectSettings,
+  outPath: string,
+): string[] {
+  const { fps, sampleRate } = settings;
+  const { inputs, maps } = sourceInputs(sourcePath, source, settings);
+  // See-through parts go black here; the transparent copy keeps them see-through.
+  const picture = source.video?.alpha
+    ? `format=rgba,${fitFilter(settings, 'black@0')},setsar=1,fps=${fps},premultiply=inplace=1,format=yuv420p`
+    : `${fitFilter(settings, 'black')},setsar=1,fps=${fps},format=yuv420p`;
 
   return [
     ...inputs,
     ...maps,
     '-vf',
-    `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
-      `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps},format=yuv420p`,
+    picture,
     // apad + -shortest keeps the audio exactly as long as the picture, so concat never drifts.
     '-af', `aresample=${sampleRate}:async=1:first_pts=0,apad`,
     '-shortest',
     ...houseEncodeArgs(settings),
+    outPath,
+  ];
+}
+
+/** The transparent copy of a source that has alpha, fitted to the project the same way. */
+export function buildAlphaArgs(sourcePath: string, source: ProbeResult, settings: ProjectSettings, outPath: string): string[] {
+  const { fps, sampleRate } = settings;
+  const { inputs, maps } = sourceInputs(sourcePath, source, settings);
+  return [
+    ...inputs,
+    ...maps,
+    '-vf',
+    `format=rgba,${fitFilter(settings, 'black@0')},setsar=1,fps=${fps},format=yuva420p`,
+    '-af', `aresample=${sampleRate}:async=1:first_pts=0,apad`,
+    '-shortest',
+    ...alphaEncodeArgs(settings),
     outPath,
   ];
 }
@@ -165,6 +220,8 @@ export async function finalizeMedia(
   origin: MediaOrigin,
   settings: ProjectSettings,
   ctx: JobContext,
+  /** Set when an alpha.webm sits beside the file. */
+  withAlpha = false,
 ): Promise<MediaFile> {
   const path = join(dir, MEDIA_FILE);
   const peaksPath = join(dir, PEAKS_FILE);
@@ -191,6 +248,7 @@ export async function finalizeMedia(
     peaksPath,
     thumbsPath,
     thumbGrid,
+    ...(withAlpha ? { alphaPath: join(dir, ALPHA_FILE) } : {}),
     origin,
   };
 }
@@ -207,13 +265,25 @@ export async function importMedia(
   if (!source.video && !source.audio) throw new Error('No video or audio found in this file');
 
   const duration = isStillImage(sourcePath) ? STILL_SECONDS : source.duration;
+  const alpha = source.video?.alpha ?? false;
+  // With a transparent copy to make as well, each pass gets half the bar.
+  const share = alpha ? RENDER_SHARE / 2 : RENDER_SHARE;
   ctx.report(duration ? 0 : null, 'Normalizing');
   await runFfmpeg({
     args: buildNormalizeArgs(sourcePath, source, settings, join(dir, MEDIA_FILE)),
     duration,
-    onProgress: (fraction) => ctx.report(fraction * RENDER_SHARE),
+    onProgress: (fraction) => ctx.report(fraction * share),
     signal: ctx.signal,
   });
+  if (alpha) {
+    ctx.report(share, 'Keeping transparency');
+    await runFfmpeg({
+      args: buildAlphaArgs(sourcePath, source, settings, join(dir, ALPHA_FILE)),
+      duration,
+      onProgress: (fraction) => ctx.report(share + fraction * share),
+      signal: ctx.signal,
+    });
+  }
 
-  return finalizeMedia(id, dir, { kind: 'import', sourcePath }, settings, ctx);
+  return finalizeMedia(id, dir, { kind: 'import', sourcePath }, settings, ctx, alpha);
 }

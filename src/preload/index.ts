@@ -21,6 +21,14 @@ const api: YtpApi = {
   cacheSize: () => ipcRenderer.invoke('cache:size'),
   clearCache: (keep) => ipcRenderer.invoke('cache:clear', keep),
   cancelJob: (jobId) => ipcRenderer.invoke('job:cancel', jobId),
+  aiStatus: () => ipcRenderer.invoke('ai:status'),
+  installAi: () => ipcRenderer.invoke('ai:install'),
+  removeAi: () => ipcRenderer.invoke('ai:remove'),
+  openCutout: (pieces, settings) => ipcRenderer.invoke('cutout:open', pieces, settings),
+  cutoutPoints: (sessionId, frame, points) => ipcRenderer.invoke('cutout:points', sessionId, frame, points),
+  trackCutout: (sessionId) => ipcRenderer.invoke('cutout:track', sessionId),
+  saveCutout: (sessionId, options) => ipcRenderer.invoke('cutout:save', sessionId, options),
+  closeCutout: (sessionId) => ipcRenderer.invoke('cutout:close', sessionId),
   onJobUpdate: (listener) => {
     const handler = (_event: IpcRendererEvent, job: JobState) => listener(job);
     ipcRenderer.on('job:update', handler);

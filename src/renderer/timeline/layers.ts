@@ -15,6 +15,7 @@ import {
   updateOverlay,
   type Layer,
   type OverlayClip,
+  type Transform,
 } from '../../shared/layers';
 import type { MediaId } from '../../shared/types';
 import { useStudio } from '../store/project';
@@ -88,13 +89,13 @@ function place(clip: OverlayClip, layerId: string | null): void {
 
 /**
  * Puts media on a layer at `start`, or on the first layer with room when no layer is given.
- * `at` centres it on a spot in the frame, given as fractions of the width and height.
+ * `at` overrides where it sits, such as the spot in the frame it was dropped on.
  */
 export function addMediaToLayer(
   mediaId: MediaId,
   start: number,
   layerId: string | null = null,
-  at?: { x: number; y: number },
+  at?: Partial<Transform>,
 ): void {
   const { project } = useStudio.getState();
   const media = project.media[mediaId];

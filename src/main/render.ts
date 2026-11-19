@@ -1,12 +1,12 @@
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { MEDIA_FILE } from '../shared/media';
+import { ALPHA_FILE, MEDIA_FILE } from '../shared/media';
 import type { EffectRenderRequest, EffectRenderResult, MediaId, ProjectSettings } from '../shared/types';
 import { getEffect, resolveParams } from './effects';
 import type { Effect, EffectStep, FilterContext } from './effects/types';
 import { runExport } from './export';
 import { runFfmpeg, type JobContext } from './ffmpeg';
-import { finalizeMedia, houseEncodeArgs, RENDER_SHARE } from './normalize';
+import { alphaEncodeArgs, alphaInputArgs, finalizeMedia, houseEncodeArgs, RENDER_SHARE } from './normalize';
 import { probe } from './probe';
 
 export interface RenderOptions {
@@ -21,13 +21,52 @@ export interface RenderOptions {
  */
 const lengthCap = (expected: number) => expected * 6 + 30;
 
+/**
+ * How a render treats transparency. `opaque` is the usual house file. `alpha` writes only a
+ * transparent file, for passes in the middle of a CHAOS roll. `both` writes the house file,
+ * see-through parts filled with `background`, plus the transparent copy beside it.
+ */
+export type AlphaOutput = { kind: 'opaque' } | { kind: 'alpha' } | { kind: 'both'; alphaPath: string; background: string };
+
 export function buildRenderArgs(
   input: string[],
   filter: string,
   settings: ProjectSettings,
   outPath: string,
   expected: number,
+  output: AlphaOutput = { kind: 'opaque' },
 ): string[] {
+  const { width, height, fps } = settings;
+  const cap = ['-t', String(lengthCap(expected))];
+  if (output.kind === 'alpha') {
+    return [
+      ...input,
+      '-filter_complex', `${filter};[vout]fps=${fps},format=yuva420p[vfinal];[aout]apad=pad_dur=2[apadded]`,
+      '-map', '[vfinal]',
+      '-map', '[apadded]',
+      '-shortest',
+      ...cap,
+      ...alphaEncodeArgs(settings),
+      outPath,
+    ];
+  }
+  if (output.kind === 'both') {
+    // An effect whose filters can't carry alpha comes out opaque, which is still a fine result.
+    const graph = [
+      filter,
+      `[vout]fps=${fps},format=rgba,split[va][vb]`,
+      '[va]format=yuva420p[valpha]',
+      `color=c=${output.background}:s=${width}x${height}:r=${fps}[bg]`,
+      '[bg][vb]overlay=shortest=1:format=auto,format=yuv420p[vflat]',
+      '[aout]apad=pad_dur=2,asplit[a1][a2]',
+    ].join(';');
+    return [
+      ...input,
+      '-filter_complex', graph,
+      '-map', '[vflat]', '-map', '[a1]', '-shortest', ...cap, ...houseEncodeArgs(settings), outPath,
+      '-map', '[valpha]', '-map', '[a2]', '-shortest', ...cap, ...alphaEncodeArgs(settings), output.alphaPath,
+    ];
+  }
   return [
     ...input,
     // Retiming inside the graph, not with -r alone, which holds the last frame for its old length
@@ -55,9 +94,10 @@ async function prepareInput(
   const { pieces, settings } = request;
   if (pieces.length === 1) {
     const [{ source, in: start, out: end }] = pieces;
+    const read = keepsAlpha(request) ? alphaInputArgs(source.alphaPath!) : ['-i', source.path];
     // -ss before -i with a re-encode is still frame-accurate, and it spares a generation of loss.
     return {
-      input: ['-ss', String(start), '-t', String(end - start), '-i', source.path],
+      input: ['-ss', String(start), '-t', String(end - start), ...read],
       duration: end - start,
       temporary: [],
     };
@@ -84,6 +124,10 @@ async function prepareInput(
   return { input: ['-i', outputPath], duration: (await probe(outputPath)).duration, temporary: [outputPath] };
 }
 
+/** Whether this render goes through the source's transparent copy. Only single layer clips can. */
+const keepsAlpha = (request: EffectRenderRequest) =>
+  !!request.keepAlpha && request.pieces.length === 1 && !!request.pieces[0].source.alphaPath;
+
 /**
  * Renders the selection through an effect into a new cached file. CHAOS is several passes in
  * a row, because each step's filter needs the real length of what the step before it made.
@@ -103,6 +147,7 @@ export async function renderEffect(
     : [{ effectId: effect.id, params: resolveParams(effect, request.params) }];
 
   ctx.report(null, effect.label);
+  const alpha = keepsAlpha(request);
   const prepared = await prepareInput(dir, request, ctx);
   let { input, duration } = prepared;
   const temporary = [...prepared.temporary];
@@ -118,8 +163,13 @@ export async function renderEffect(
       hasRubberband: options.filters.has('rubberband'),
     };
     const last = index === steps.length - 1;
-    const outPath = join(dir, last ? MEDIA_FILE : `pass-${index}.mp4`);
+    const outPath = join(dir, last ? MEDIA_FILE : `pass-${index}.${alpha ? 'webm' : 'mp4'}`);
     if (!last) temporary.push(outPath);
+    const output: AlphaOutput = !alpha
+      ? { kind: 'opaque' }
+      : last
+        ? { kind: 'both', alphaPath: join(dir, ALPHA_FILE), background: 'black' }
+        : { kind: 'alpha' };
 
     ctx.report(null, `${stepEffect.label} (${index + 1}/${steps.length})`);
 
@@ -133,13 +183,13 @@ export async function renderEffect(
 
     const expected = stepEffect.expectedDuration?.(step.params, duration) ?? duration;
     await runFfmpeg({
-      args: buildRenderArgs(input, stepEffect.buildFilter(step.params, context), settings, outPath, expected),
+      args: buildRenderArgs(input, stepEffect.buildFilter(step.params, context), settings, outPath, expected, output),
       duration: expected,
       onProgress: (fraction) => ctx.report(((index + fraction) / steps.length) * RENDER_SHARE),
       signal: ctx.signal,
     });
 
-    input = ['-i', outPath];
+    input = alpha ? alphaInputArgs(outPath) : ['-i', outPath];
     duration = (await probe(outPath)).duration;
   }
 
@@ -159,7 +209,7 @@ export async function renderEffect(
     in: first.in,
     out: pieces[pieces.length - 1].out,
   };
-  const media = await finalizeMedia(id, dir, origin, settings, ctx);
+  const media = await finalizeMedia(id, dir, origin, settings, ctx, alpha);
   await Promise.all(temporary.map((path) => rm(path, { force: true })));
   return { media, summary };
 }

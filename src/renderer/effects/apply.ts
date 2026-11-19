@@ -30,6 +30,8 @@ interface Target {
   pieces: ClipTarget[];
   range: TimeRange;
   timeline: Clip[];
+  /** A layer clip rather than the main track: it renders through its transparent copy, if it has one. */
+  layer?: boolean;
 }
 
 /** Rendered previews, kept so that pressing Apply afterwards doesn't render it all again. */
@@ -44,8 +46,8 @@ let lastOnLayer: Promise<void> | null = null;
 const findEffect = (id: string): EffectInfo | undefined =>
   useStudio.getState().effects.find((effect) => effect.id === id);
 
-const cacheKey = ({ pieces }: Target, effectId: string, params: EffectParams) =>
-  JSON.stringify([pieces.map(({ mediaId, in: start, out }) => [mediaId, start, out]), effectId, params]);
+const cacheKey = ({ pieces, layer }: Target, effectId: string, params: EffectParams) =>
+  JSON.stringify([pieces.map(({ mediaId, in: start, out }) => [mediaId, start, out]), effectId, params, layer === true]);
 
 function queued(effectId: string): () => void {
   useStudio.setState(({ effectQueue }) => ({ effectQueue: [...effectQueue, effectId] }));
@@ -81,6 +83,7 @@ async function render(target: Target, effectId: string, params: EffectParams, ke
     effectId,
     params,
     settings: project.settings,
+    keepAlpha: target.layer === true,
   });
   if (result) {
     useStudio.getState().addMedia(result.media);
@@ -161,7 +164,7 @@ function layerTarget(clipId: string): Target | null {
   const found = findOverlay(useStudio.getState().project.layers, clipId);
   if (!found || found.clip.source.kind !== 'media') return null;
   const { mediaId, in: start, out } = found.clip.source;
-  return { pieces: [{ clipId, mediaId, in: start, out }], range: { start: 0, end: out - start }, timeline: [] };
+  return { pieces: [{ clipId, mediaId, in: start, out }], range: { start: 0, end: out - start }, timeline: [], layer: true };
 }
 
 /**

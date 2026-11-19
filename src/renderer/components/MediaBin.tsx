@@ -2,7 +2,7 @@ import { useState, type CSSProperties, type DragEvent } from 'react';
 import logoUrl from '../assets/logo.png';
 import { mediaUrl, THUMBS_FILE } from '../../shared/media';
 import type { JobState, MediaFile } from '../../shared/types';
-import { fileName, formatTimecode } from '../format';
+import { formatTimecode, mediaName } from '../format';
 import { newProject, openProject, saveProject } from '../persistence';
 import { importPaths, useStudio } from '../store/project';
 import { appendMedia } from '../timeline/commands';
@@ -22,7 +22,10 @@ export function MediaBin() {
 
   // Rendered effects live on the timeline and sounds in their own tab; this is what was imported.
   const sfxIds = new Set(Object.values(sfxMedia));
-  const items = Object.values(media).filter((item) => item.origin.kind === 'import' && !sfxIds.has(item.id));
+  // Cutouts live here too: they're the cast for running gags.
+  const items = Object.values(media).filter(
+    (item) => (item.origin.kind === 'import' || item.origin.kind === 'cutout') && !sfxIds.has(item.id),
+  );
   const binJobs = jobs.filter((job) => job.kind === 'import');
 
   const onDrop = (event: DragEvent) => {
@@ -102,7 +105,7 @@ function MediaCard({ media }: { media: MediaFile }) {
   const selected = useStudio((state) => state.previewSource?.mediaId === media.id);
   const playInPreview = useStudio((state) => state.playInPreview);
   const hasTimeline = useStudio((state) => state.project.timeline.length > 0);
-  const name = media.origin.kind === 'import' ? fileName(media.origin.sourcePath) : media.origin.effectId;
+  const name = mediaName(media);
 
   // The sprite is a grid of tiles; scaling it to `cols` wide shows just the first one.
   const grid = media.thumbGrid;

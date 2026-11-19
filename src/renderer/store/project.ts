@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { EffectInfo } from '../../shared/effects';
 import type { Layer } from '../../shared/layers';
-import type { Clip, JobState, MediaFile, MediaId, Project } from '../../shared/types';
+import type { Clip, JobState, MediaFile, MediaId, Project, RenderPiece } from '../../shared/types';
 import { clamp, timelineDuration, type TimeRange } from '../timeline/model';
 
 const HISTORY_LIMIT = 200;
@@ -68,6 +68,14 @@ export function savePins(pins: (string | null)[]): void {
   }
 }
 
+/** A stretch of the main track to cut a character out of. */
+export interface CutoutRequest {
+  pieces: RenderPiece[];
+  /** Where the stretch starts on the timeline, so the cutout can go back over it. */
+  start: number;
+  name: string;
+}
+
 export interface Toast {
   id: string;
   kind: keyof typeof TOAST_SECONDS;
@@ -87,6 +95,8 @@ interface StudioState {
   overlay: string | null;
   /** Waiting for a click on the preview to choose the selected clip's key colour. */
   pickingKey: boolean;
+  /** What the cutout studio is open on, or null when it's closed. */
+  cutout: CutoutRequest | null;
   playhead: number;
   playing: boolean;
   loop: boolean;
@@ -137,6 +147,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   selection: null,
   overlay: null,
   pickingKey: false,
+  cutout: null,
   playhead: 0,
   playing: false,
   loop: false,

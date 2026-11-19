@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { CutoutStudio } from './components/CutoutStudio';
 import { EffectPalette } from './components/EffectPalette';
 import { MediaBin } from './components/MediaBin';
 import { Preview } from './components/Preview';
@@ -32,6 +33,7 @@ export function App() {
       <EffectPalette />
       <Timeline />
       <StatusBar />
+      <CutoutStudio />
       <Toasts />
     </div>
   );

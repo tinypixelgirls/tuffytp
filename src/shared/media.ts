@@ -6,6 +6,8 @@ export const MEDIA_SCHEME = 'ytp-media';
 export const MEDIA_FILE = 'media.mp4';
 export const PEAKS_FILE = 'peaks.json';
 export const THUMBS_FILE = 'thumbs.jpg';
+/** Only for media with transparency: VP9 with an alpha channel. */
+export const ALPHA_FILE = 'alpha.webm';
 
 export function mediaUrl(id: MediaId, file: string): string {
   return `${MEDIA_SCHEME}://cache/${id}/${file}`;

@@ -13,7 +13,7 @@ function formatSize(bytes: number): string {
 /** Everything the project could still need: the bin, the timeline, the layers, and every undo step. */
 function mediaInUse(): string[] {
   const { project, past, future } = useStudio.getState();
-  const imports = Object.values(project.media).filter((media) => media.origin.kind === 'import');
+  const imports = Object.values(project.media).filter((media) => media.origin.kind !== 'effect');
   const steps = [project, ...past, ...future];
   const clips = steps.flatMap((step) => step.timeline).map((clip) => clip.mediaId);
   const layered = steps.flatMap((step) => overlayMediaIds(step.layers));

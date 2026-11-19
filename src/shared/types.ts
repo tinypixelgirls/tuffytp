@@ -22,6 +22,14 @@ export interface WaveformPeaks {
 export type MediaOrigin =
   | { kind: 'import'; sourcePath: string }
   | {
+      kind: 'cutout';
+      /** What it shows in the bin, e.g. "One Piece 001 @ 00:12". */
+      name: string;
+      fromMedia: MediaId;
+      in: number;
+      out: number;
+    }
+  | {
       kind: 'effect';
       effectId: string;
       params: Record<string, unknown>;
@@ -42,6 +50,11 @@ export interface MediaFile {
   peaksPath?: string;
   thumbsPath?: string;
   thumbGrid?: ThumbGrid;
+  /**
+   * The same media with real transparency, as VP9 with alpha. Layers use this; the main track
+   * and the bin use `path`, where the transparent parts are filled with a solid colour.
+   */
+  alphaPath?: string;
   origin: MediaOrigin;
 }
 
@@ -70,7 +83,7 @@ export interface Project {
 }
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
-export type JobKind = 'import' | 'render' | 'export';
+export type JobKind = 'import' | 'render' | 'export' | 'ai' | 'cutout';
 
 export interface JobState {
   id: string;
@@ -95,6 +108,8 @@ export interface EffectRenderRequest {
   effectId: string;
   params?: EffectParams;
   settings: ProjectSettings;
+  /** Render through the media's transparent version and keep the transparency, where the effect allows. */
+  keepAlpha?: boolean;
 }
 
 export interface EffectRenderResult {
@@ -126,7 +141,44 @@ export interface ExportRequest {
 
 export interface CompositeRequest {
   layers: Layer[];
-  media: Record<MediaId, Pick<MediaFile, 'path' | 'duration'>>;
+  media: Record<MediaId, Pick<MediaFile, 'path' | 'duration' | 'alphaPath'>>;
+}
+
+/** Whether the AI add-on is installed, and what it runs on. */
+export interface AiStatus {
+  installed: boolean;
+  /** Set once installed: the GPU's name, or null when it runs on the CPU. */
+  gpu: string | null;
+  model: string | null;
+}
+
+/** An open cutout: the selection's frames on disk, ready to click on. */
+export interface CutoutSession {
+  id: string;
+  /** Cache folder holding frames/00000.jpg… and masks/00000.png… */
+  folder: string;
+  frames: number;
+  fps: number;
+  width: number;
+  height: number;
+}
+
+export interface CutoutPoint {
+  /** Pixels in the frame. */
+  x: number;
+  y: number;
+  /** True to keep what's under it, false to cut it away. */
+  keep: boolean;
+}
+
+export interface CutoutSaveOptions {
+  /** Pixels to grow (positive) or shrink (negative) the edge by. */
+  grow: number;
+  /** Edge softness in pixels. */
+  feather: number;
+  /** Fill for the flat version the bin and main track use: a screen colour, so it keys back out. */
+  background: string;
+  name: string;
 }
 
 /** Everything that outlives a launch of the app. */
@@ -175,5 +227,17 @@ export interface YtpApi {
   /** Deletes everything in the cache except these media items. */
   clearCache(keep: MediaId[]): Promise<void>;
   cancelJob(jobId: string): Promise<void>;
+  aiStatus(): Promise<AiStatus>;
+  /** Downloads and sets up the AI add-on. Resolves to whether it finished. */
+  installAi(): Promise<boolean>;
+  removeAi(): Promise<void>;
+  /** Pulls the selection's frames out for cutting. Null when it failed or was cancelled. */
+  openCutout(pieces: RenderPiece[], settings: ProjectSettings): Promise<CutoutSession | null>;
+  /** Sets one frame's clicks and resolves to the mask's version, for cache-busting its URL. */
+  cutoutPoints(sessionId: string, frame: number, points: CutoutPoint[]): Promise<number>;
+  /** Follows the mask through every frame. Resolves to whether it finished. */
+  trackCutout(sessionId: string): Promise<boolean>;
+  saveCutout(sessionId: string, options: CutoutSaveOptions): Promise<MediaFile | null>;
+  closeCutout(sessionId: string): Promise<void>;
   onJobUpdate(listener: (job: JobState) => void): () => void;
 }

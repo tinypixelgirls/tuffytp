@@ -22,7 +22,7 @@ function show(loaded: LoadedProject): void {
   const { name, missing } = loaded;
   const file = { ...loaded.file, project: withLayers(loaded.file.project) };
   const gone = new Set(missing);
-  const lostImport = (id: string) => gone.has(id) && file.project.media[id].origin.kind === 'import';
+  const lostImport = (id: string) => gone.has(id) && file.project.media[id].origin.kind !== 'effect';
   const media = Object.fromEntries(Object.entries(file.project.media).filter(([id]) => !lostImport(id)));
   const timeline = file.project.timeline.filter((clip) => !gone.has(clip.mediaId));
   const layers = file.project.layers.map((layer) => ({

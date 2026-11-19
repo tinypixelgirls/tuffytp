@@ -88,6 +88,8 @@ export function useKeyboardShortcuts(): void {
       const target = event.target as HTMLElement;
       if (target.matches('input[type="text"], input[type="number"], textarea, select')) return;
       if (target.closest('.popover, .modal')) return;
+      // The cutout studio has its own keys, and the timeline shouldn't move under it.
+      if (useStudio.getState().cutout) return;
       const action = actionFor(event);
       if (!action) return;
       event.preventDefault();

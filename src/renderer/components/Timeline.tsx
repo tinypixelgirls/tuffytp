@@ -39,6 +39,7 @@ import { addLayer, addTextAtPlayhead } from '../timeline/layers';
 import { mediaForSfx } from '../sfx';
 import { ExportDialog } from './ExportDialog';
 import { LayerLanes } from './LayerLanes';
+import { startCutout } from '../cutout';
 import { MEDIA_DRAG_TYPE, SFX_DRAG_TYPE } from './MediaBin';
 
 const MIN_ZOOM = 0.5;
@@ -431,6 +432,14 @@ export function Timeline() {
           Loop
         </button>
         <span className="tool-gap" />
+        <button
+          className="tool cutout-button"
+          disabled={!hasSelection}
+          title="Cut a character out of the selected shot with AI, onto a layer"
+          onClick={startCutout}
+        >
+          ✂ Cut out
+        </button>
         <button className="tool" disabled={clipCount === 0} title="Add an empty layer on top" onClick={addLayer}>
           + Layer
         </button>

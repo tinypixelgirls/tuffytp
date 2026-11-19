@@ -248,7 +248,9 @@ export function planComposite(
     if (source.kind === 'media') {
       const media = composite.media[source.mediaId];
       if (!media) throw new Error('A layer uses media that is no longer in the project.');
-      inputs.push('-ss', num(source.in), '-t', num(seconds), '-i', media.path);
+      // Transparent media is read through libvpx, the only VP9 decoder that keeps the alpha.
+      const read = media.alphaPath ? ['-c:v', 'libvpx-vp9', '-i', media.alphaPath] : ['-i', media.path];
+      inputs.push('-ss', num(source.in), '-t', num(seconds), ...read);
       audioInput = nextInput;
       chain = `[${nextInput++}:v]setpts=PTS-STARTPTS,fps=${fps},format=rgba`;
     } else {

@@ -17,7 +17,7 @@ import {
   type TextStyle,
   type Transform,
 } from '../../shared/layers';
-import { fileName } from '../format';
+import { mediaName } from '../format';
 import { useStudio } from '../store/project';
 import {
   deleteSelectedOverlay,
@@ -103,12 +103,7 @@ export function Inspector() {
     if (time !== null) seekTimeline(time);
   };
 
-  const name =
-    clip.source.kind === 'text'
-      ? 'Text'
-      : media?.origin.kind === 'import'
-        ? fileName(media.origin.sourcePath)
-        : `${media?.origin.kind === 'effect' ? media.origin.effectId : 'Clip'} render`;
+  const name = clip.source.kind === 'text' ? 'Text' : mediaName(media ?? undefined);
 
   return (
     <div className="inspector">
