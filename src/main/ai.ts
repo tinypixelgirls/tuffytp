@@ -143,8 +143,10 @@ export async function installAiPack(root: string, serverSource: string, ctx: Job
     const archive = join(paths.uvDir, asset);
     step(0, 0, 'Downloading uv');
     await download(`https://github.com/astral-sh/uv/releases/latest/download/${asset}`, archive, signal, (f) => step(0, f));
-    // Windows 10 and later ship a tar that reads zips too.
-    await run('tar', ['-xf', archive, '-C', paths.uvDir], { signal });
+    // Windows 10 and later ship a tar that reads zips too. Call it by its full path: a GNU tar
+    // earlier on PATH (Git for Windows, MSYS) reads "C:\..." as a remote host and fails.
+    const tar = WINDOWS ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+    await run(tar, ['-xf', archive, '-C', paths.uvDir], { signal });
     uv = await findFile(paths.uvDir, uvName);
     if (!uv) throw new Error('uv was downloaded but its program could not be found.');
   }
