@@ -5,20 +5,24 @@ directories:
 files:
   - out/**
   - package.json
-  - '!node_modules/ffprobe-static/bin/**'
-  - node_modules/ffprobe-static/bin/${platform}/${arch}/**
 asarUnpack:
   - node_modules/ffmpeg-static/**
   - node_modules/ffprobe-static/**
 win:
   target: nsis
+  files:
+    - '!node_modules/ffprobe-static/bin/{darwin,linux}/**'
   icon: build/icon.ico
 nsis:
   installerIcon: build/icon.ico
   uninstallerIcon: build/icon.ico
 mac:
   target: dmg
+  files:
+    - '!node_modules/ffprobe-static/bin/{win32,linux}/**'
   icon: build/icon.png
 linux:
   target: AppImage
+  files:
+    - '!node_modules/ffprobe-static/bin/{win32,darwin}/**'
   icon: build/icon.png
